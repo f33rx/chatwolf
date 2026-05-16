@@ -51,6 +51,7 @@ class GameState(BaseModel):
     seer_checked: bool = False
     bodyguard_protected: bool = False
     hunter_shot_pending: bool = False
+    last_guarded_user_id: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
 
