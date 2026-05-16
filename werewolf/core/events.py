@@ -30,3 +30,8 @@ class PhaseChanged(GameEvent):
 class GameEnded(GameEvent):
     event_type: Literal["game_ended"] = "game_ended"
     winning_team: str
+
+
+class WolvesRevealed(GameEvent):
+    event_type: Literal["wolves_revealed"] = "wolves_revealed"
+    wolf_ids: list[str]
