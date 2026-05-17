@@ -114,6 +114,19 @@ class WerewolfEngine:
         self._repo.save_game(game)
         return game
 
+    def leave(self, game_id: str, player_id: str) -> GameState:
+        game = self._get_or_raise(game_id)
+        if game.phase != Phase.LOBBY:
+            raise InvalidPhaseError("Can only leave during LOBBY phase")
+        game.players.pop(player_id, None)
+        game.version += 1
+        self._repo.save_game(game)
+        return game
+
+    def force_end(self, game_id: str) -> GameState:
+        game = self._get_or_raise(game_id)
+        return self._end_game(game, "admin")
+
     def start(self, game_id: str) -> GameState:
         game = self._get_or_raise(game_id)
         if game.phase != Phase.LOBBY:
