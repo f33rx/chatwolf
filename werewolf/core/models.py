@@ -52,6 +52,7 @@ class GameState(BaseModel):
     bodyguard_protected: bool = False
     hunter_shot_pending: bool = False
     winner: str | None = None
+    last_guarded_user_id: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
 

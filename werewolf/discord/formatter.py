@@ -184,8 +184,16 @@ def player_joined(display_name: str, player_count: int) -> str:
     return f"{display_name} joined ({player_count} player(s) in lobby)."
 
 
+def player_already_joined() -> str:
+    return "You are already in this game."
+
+
 def player_left(display_name: str) -> str:
     return f"{display_name} left the game."
+
+
+def not_enough_players() -> str:
+    return "Need at least 3 players to start."
 
 
 def wrong_phase(msg: str = "") -> str:

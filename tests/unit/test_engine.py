@@ -277,9 +277,12 @@ class TestSubmitNightAction:
         started = engine.start(state.game_id)
         day = engine.resolve_phase(started.game_id)  # FIRST_NIGHT -> DAY
         pids = list(day.players.keys())
+        # Vote until auto-resolve fires (noone reaches majority after 2/3 votes)
+        night = day
         for pid in pids:
-            engine.vote(day.game_id, pid, None)
-        night = engine.resolve_phase(day.game_id)  # all noone -> NIGHT
+            night = engine.vote(day.game_id, pid, None)
+            if night.phase == Phase.NIGHT:
+                break
         assert night.phase == Phase.NIGHT
         seer_id = next(p.user_id for p in night.players.values() if p.role == "seer")
         non_seer = next(p.user_id for p in night.players.values() if p.role != "seer")
@@ -322,10 +325,12 @@ class TestResolvePhase:
         started = engine.start(state.game_id)
         day = engine.resolve_phase(started.game_id)
         player_ids = list(day.players.keys())
-        # All players vote noone -> no lynch -> transitions to NIGHT
+        # All noone -> no lynch -> NIGHT (auto-resolves on majority)
+        night = day
         for pid in player_ids:
-            engine.vote(day.game_id, pid, None)
-        night = engine.resolve_phase(day.game_id)
+            night = engine.vote(day.game_id, pid, None)
+            if night.phase == Phase.NIGHT:
+                break
         assert night.phase == Phase.NIGHT
 
     def test_majority_vote_lynches_player(self, engine):

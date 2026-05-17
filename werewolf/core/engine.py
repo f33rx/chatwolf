@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from werewolf.core.models import Action, GameState, Phase, Player
 from werewolf.core.protocols import GameRepository
+from werewolf.core.roles import Bodyguard, Hunter
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -156,9 +157,9 @@ class WerewolfEngine:
         game.version += 1
         self._repo.save_game(game)
 
-        # Auto-resolve only when a specific player has strict majority —
-        # noone-majority and all-voted cases are handled by explicit resolve_phase.
-        if self._has_player_majority(game):
+        # Auto-resolve on player majority or all-voted; noone-only majority
+        # requires explicit resolve_phase (timer/moderator call).
+        if self._has_player_majority(game) or self._all_alive_voted(game):
             return self.resolve_phase(game_id)
 
         return game
@@ -180,6 +181,13 @@ class WerewolfEngine:
         if actor is None or not actor.alive:
             raise ActionNotAllowedError("Actor is not an alive player in this game")
 
+        # Bodyguard cannot guard the same target two nights in a row
+        if action.action_type == "protect" and action.target_id:
+            if not Bodyguard.can_protect(game, action.target_id):
+                raise ActionNotAllowedError(
+                    "Bodyguard cannot protect the same player two nights in a row"
+                )
+
         game.pending_actions[actor_id] = action
         self._update_night_flags(game, actor, action)
         game.version += 1
@@ -187,6 +195,48 @@ class WerewolfEngine:
 
         if self._night_is_ready(game):
             return self.resolve_phase(game_id)
+
+        return game
+
+    def hunter_shoot(self, game_id: str, hunter_id: str, target_id: str) -> GameState:
+        """Hunter fires after elimination. Resolves hunter_shot_pending."""
+        game = self._get_or_raise(game_id)
+        if not game.hunter_shot_pending:
+            raise InvalidPhaseError("No hunter shot is pending")
+        hunter = game.players.get(hunter_id)
+        if hunter is None or hunter.alive or hunter.role != "hunter":
+            raise ActionNotAllowedError("Only a dead hunter can fire their shot")
+
+        Hunter.on_death(game, target_id)
+        game.hunter_shot_pending = False
+        game.version += 1
+
+        winner = self._check_win(game)
+        if winner:
+            return self._end_game(game, winner)
+
+        # Resume the paused phase transition
+        if game.phase == Phase.DAY:
+            # Proceed to NIGHT after hunter fires
+            game.phase = Phase.NIGHT
+            game.round += 1
+            game.pending_actions.clear()
+            game.seer_checked = False
+            game.bodyguard_protected = False
+            game.night_kills_pending = False
+            game.version += 1
+            self._repo.save_game(game)
+        elif game.phase == Phase.NIGHT:
+            # Proceed to DAY after hunter fires
+            game.phase = Phase.DAY
+            game.pending_actions.clear()
+            game.seer_checked = False
+            game.bodyguard_protected = False
+            game.night_kills_pending = False
+            game.version += 1
+            self._repo.save_game(game)
+        else:
+            self._repo.save_game(game)
 
         return game
 
@@ -271,15 +321,32 @@ class WerewolfEngine:
         alive = [p for p in game.players.values() if p.alive]
         wolves = [p for p in alive if p.role == "werewolf"]
         seers = [p for p in alive if p.role == "seer"]
+        bodyguards = [p for p in alive if p.role == "bodyguard"]
 
-        seer_done = not seers or game.seer_checked
+        # If a kill is pending, the kill target's action is moot
+        pending_kill_targets: set[str] = {
+            a.target_id
+            for a in game.pending_actions.values()
+            if a.action_type == "kill" and a.target_id is not None
+        }
+        seer_ids = {p.user_id for p in seers}
+        bodyguard_ids = {p.user_id for p in bodyguards}
+
+        seer_done = (
+            not seers or game.seer_checked or bool(seer_ids & pending_kill_targets)
+        )
+        bodyguard_done = (
+            not bodyguards
+            or game.bodyguard_protected
+            or bool(bodyguard_ids & pending_kill_targets)
+        )
 
         if game.phase == Phase.FIRST_NIGHT:
-            # Wolves hold on first night; only seer action required
-            return seer_done
+            # Wolves hold on first night; only seer and bodyguard actions required
+            return seer_done and bodyguard_done
 
         wolves_done = not wolves or game.night_kills_pending
-        return wolves_done and seer_done
+        return wolves_done and seer_done and bodyguard_done
 
     def _has_player_majority(self, game: GameState) -> bool:
         """True only when a specific (non-noone) player has strict majority."""
@@ -290,6 +357,11 @@ class WerewolfEngine:
             if target is not None:
                 counts[target] = counts.get(target, 0) + 1
         return any(c >= threshold for c in counts.values())
+
+    def _all_alive_voted(self, game: GameState) -> bool:
+        alive_ids = {p.user_id for p in game.players.values() if p.alive}
+        voted = {vid for vid in game.day_votes if vid in alive_ids}
+        return bool(alive_ids) and voted == alive_ids
 
     def _day_is_ready(self, game: GameState) -> bool:
         """True when all alive players voted or any candidate has strict majority."""
@@ -328,6 +400,12 @@ class WerewolfEngine:
         return game
 
     def _resolve_first_night(self, game: GameState) -> GameState:
+        # Record bodyguard protection so they cannot repeat on night 2
+        for action in game.pending_actions.values():
+            if action.action_type == "protect" and action.target_id:
+                Bodyguard.record_protection(game, action.target_id)
+                break
+
         game.phase = Phase.DAY
         game.round = 1
         game.pending_actions.clear()
@@ -362,6 +440,14 @@ class WerewolfEngine:
                     game.version += 1
                     return self._end_game(game, "tanner")
 
+                # Hunter fires when lynched — pause transition
+                if target_player.role == "hunter":
+                    game.hunter_shot_pending = True
+                    game.day_votes.clear()
+                    game.version += 1
+                    self._repo.save_game(game)
+                    return game
+
         game.day_votes.clear()
 
         winner = self._check_win(game)
@@ -393,17 +479,34 @@ class WerewolfEngine:
                 wolf_kill_target = action.target_id
                 break
 
+        hunter_killed = False
         if wolf_kill_target and wolf_kill_target != protected_id:
             target = game.players.get(wolf_kill_target)
             if target and target.alive:
                 target.alive = False
+                if target.role == "hunter":
+                    hunter_killed = True
+
+        # Record protection after the kill so bodyguard can't repeat next night
+        if protected_id:
+            Bodyguard.record_protection(game, protected_id)
+
+        # Hunter fires when killed at night — pause transition
+        if hunter_killed:
+            game.hunter_shot_pending = True
+            game.pending_actions.clear()
+            game.seer_checked = False
+            game.bodyguard_protected = False
+            game.night_kills_pending = False
+            game.version += 1
+            self._repo.save_game(game)
+            return game
 
         winner = self._check_win(game)
         if winner:
             return self._end_game(game, winner)
 
         game.phase = Phase.DAY
-        game.round += 1
         game.pending_actions.clear()
         game.seer_checked = False
         game.bodyguard_protected = False

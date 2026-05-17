@@ -1,4 +1,4 @@
-"""Role base class and concrete v1 roles: Villager, Werewolf."""
+"""Role base class and concrete roles."""
 
 from __future__ import annotations
 
@@ -41,7 +41,6 @@ class Villager(Role):
 class Seer(Role):
     name = "seer"
 
-    # Roles that appear as werewolf to the Seer
     _WOLF_ALIGNED = frozenset({"werewolf", "wolfman", "lycan"})
 
     @classmethod
@@ -111,3 +110,25 @@ class Werewolf(Role):
         if actor.user_id == target.user_id:
             return False
         return True
+
+
+class Hunter:
+    name = "hunter"
+
+    @staticmethod
+    def on_death(game: GameState, shot_target_id: str) -> None:
+        target = game.players.get(shot_target_id)
+        if target and target.alive:
+            target.alive = False
+
+
+class Bodyguard:
+    name = "bodyguard"
+
+    @staticmethod
+    def can_protect(game: GameState, target_id: str) -> bool:
+        return target_id != game.last_guarded_user_id
+
+    @staticmethod
+    def record_protection(game: GameState, target_id: str) -> None:
+        game.last_guarded_user_id = target_id
