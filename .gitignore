@@ -12,3 +12,7 @@
 !.elasticbeanstalk/*.cfg.yml
 !.elasticbeanstalk/*.global.yml
 run.sh
+__pycache__/
+*.py[cod]
+.venv/
+.python-version
