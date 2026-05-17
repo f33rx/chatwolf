@@ -55,9 +55,9 @@ class PrivatePlayerState(BaseModel):
 
 _ROLE_TABLE: dict[int, list[str]] = {
     3: ["werewolf", "seer", "villager"],
-    4: ["werewolf", "seer", "villager", "villager"],
+    4: ["werewolf", "tanner", "seer", "villager"],
     5: ["werewolf", "werewolf", "seer", "villager", "villager"],
-    6: ["werewolf", "werewolf", "seer", "villager", "villager", "villager"],
+    6: ["werewolf", "tanner", "seer", "villager", "villager", "villager"],
 }
 
 
@@ -321,6 +321,7 @@ class WerewolfEngine:
 
     def _end_game(self, game: GameState, winner: str) -> GameState:
         game.phase = Phase.OVER
+        game.winner = winner
         game.ended_at = datetime.now(UTC)
         game.version += 1
         self._repo.save_game(game)
@@ -356,6 +357,10 @@ class WerewolfEngine:
             target_player = game.players.get(lynch_target)
             if target_player and target_player.alive:
                 target_player.alive = False
+                if target_player.role == "tanner":
+                    game.day_votes.clear()
+                    game.version += 1
+                    return self._end_game(game, "tanner")
 
         game.day_votes.clear()
 

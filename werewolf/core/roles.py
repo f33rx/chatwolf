@@ -68,6 +68,21 @@ class Seer(Role):
         return actor.user_id != target.user_id
 
 
+class Tanner(Role):
+    name = "tanner"
+
+    def on_phase_start(self, game: GameState) -> list[GameEvent]:
+        return []
+
+    def on_death(self, game: GameState, player: Player) -> list[GameEvent]:
+        return []
+
+    def validate_action(
+        self, game: GameState, actor: Player, target: Player | None
+    ) -> bool:
+        return False
+
+
 class Werewolf(Role):
     name = "werewolf"
 

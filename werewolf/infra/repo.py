@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS games (
     seer_checked          BOOLEAN NOT NULL,
     bodyguard_protected   BOOLEAN NOT NULL,
     hunter_shot_pending   BOOLEAN NOT NULL,
+    winner        VARCHAR,
     started_at    TIMESTAMPTZ,
     ended_at      TIMESTAMPTZ
 );
@@ -132,7 +133,7 @@ class DuckDBGameRepository:
     def _insert(self, game: GameState) -> None:
         self._conn.execute(
             """
-            INSERT INTO games VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO games VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             self._row(game),
         )
@@ -146,7 +147,7 @@ class DuckDBGameRepository:
                 guild_id=?, channel_id=?, phase=?, round=?, version=?,
                 role_strategy=?, day_votes=?, night_kills_pending=?,
                 seer_checked=?, bodyguard_protected=?, hunter_shot_pending=?,
-                started_at=?, ended_at=?
+                winner=?, started_at=?, ended_at=?
             WHERE game_id=?
             """,
             [
@@ -161,6 +162,7 @@ class DuckDBGameRepository:
                 game.seer_checked,
                 game.bodyguard_protected,
                 game.hunter_shot_pending,
+                game.winner,
                 game.started_at,
                 game.ended_at,
                 game.game_id,
@@ -183,6 +185,7 @@ class DuckDBGameRepository:
             game.seer_checked,
             game.bodyguard_protected,
             game.hunter_shot_pending,
+            game.winner,
             game.started_at,
             game.ended_at,
         ]
@@ -217,6 +220,7 @@ class DuckDBGameRepository:
             seer_checked,
             bodyguard_protected,
             hunter_shot_pending,
+            winner,
             started_at,
             ended_at,
         ) = row
@@ -263,6 +267,7 @@ class DuckDBGameRepository:
             seer_checked=seer_checked,
             bodyguard_protected=bodyguard_protected,
             hunter_shot_pending=hunter_shot_pending,
+            winner=winner,
             started_at=started_at,
             ended_at=ended_at,
         )
