@@ -38,6 +38,36 @@ class Villager(Role):
         return False
 
 
+class Seer(Role):
+    name = "seer"
+
+    # Roles that appear as werewolf to the Seer
+    _WOLF_ALIGNED = frozenset({"werewolf", "wolfman", "lycan"})
+
+    @classmethod
+    def investigate(cls, role: str) -> str:
+        return "werewolf" if role.lower() in cls._WOLF_ALIGNED else "villager"
+
+    def on_phase_start(self, game: GameState) -> list[GameEvent]:
+        return []
+
+    def on_death(self, game: GameState, player: Player) -> list[GameEvent]:
+        return []
+
+    def validate_action(
+        self, game: GameState, actor: Player, target: Player | None
+    ) -> bool:
+        if game.phase not in (Phase.FIRST_NIGHT, Phase.NIGHT):
+            return False
+        if not actor.alive:
+            return False
+        if target is None:
+            return False
+        if not target.alive:
+            return False
+        return actor.user_id != target.user_id
+
+
 class Werewolf(Role):
     name = "werewolf"
 
