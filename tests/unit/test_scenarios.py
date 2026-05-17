@@ -432,3 +432,127 @@ def test_hunter_shoot_requires_pending_flag(engine, repo):
     # No hunter_shot_pending — should raise
     with pytest.raises(InvalidPhaseError):
         engine.hunter_shoot(gid, "hunter", "wolf")
+
+
+# ---------------------------------------------------------------------------
+# Scenario 13: resolve_phase called twice in DAY — idempotent
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_phase_double_call_day_is_idempotent(engine, repo):
+    gid = _make_game(engine, {"wolf": "Wolf", "seer": "Seer", "vill": "Villager"})
+    _force_roles(repo, gid, {"wolf": "werewolf", "seer": "seer", "vill": "villager"})
+
+    action = Action(actor_id="seer", action_type="investigate", target_id="wolf")
+    engine.submit_night_action(gid, "seer", action)  # FIRST_NIGHT -> DAY
+
+    # Two consecutive calls with no votes must both be no-ops
+    game1 = engine.resolve_phase(gid)
+    game2 = engine.resolve_phase(gid)
+    assert game1.phase == Phase.DAY
+    assert game2.phase == Phase.DAY
+    assert all(p.alive for p in game2.players.values())
+
+
+# ---------------------------------------------------------------------------
+# Scenario 14: resolve_phase called twice in NIGHT — idempotent
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_phase_double_call_night_is_idempotent(engine, repo):
+    gid = _make_game(engine, {"wolf": "Wolf", "seer": "Seer", "vill": "Villager"})
+    _force_roles(repo, gid, {"wolf": "werewolf", "seer": "seer", "vill": "villager"})
+
+    # Advance past FIRST_NIGHT then force a tie vote to land in NIGHT
+    action = Action(actor_id="seer", action_type="investigate", target_id="wolf")
+    engine.submit_night_action(gid, "seer", action)
+    engine.vote(gid, "seer", "wolf")
+    engine.vote(gid, "vill", "seer")
+    engine.vote(gid, "wolf", "vill")  # tied -> NIGHT, no actions submitted yet
+
+    game = repo.get_game(gid)
+    assert game is not None
+    assert game.phase == Phase.NIGHT
+
+    # Two consecutive calls with no night actions must both be no-ops
+    game1 = engine.resolve_phase(gid)
+    game2 = engine.resolve_phase(gid)
+    assert game1.phase == Phase.NIGHT
+    assert game2.phase == Phase.NIGHT
+    assert all(p.alive for p in game2.players.values())
+
+
+# ---------------------------------------------------------------------------
+# Scenario 15: Hunter shot fires before win check (wolf kill would have won)
+# ---------------------------------------------------------------------------
+
+
+def test_hunter_shot_prevents_premature_wolf_win(engine, repo):
+    # wolf=1, hunter=1, vill=1. After wolf kills hunter: alive = wolf + vill
+    # (1 wolf >= 1 good) — wolf would win. But hunter fires first, killing wolf.
+    gid = _make_game(engine, {"wolf": "Wolf", "hunter": "Hunter", "vill": "Villager"})
+    _force_roles(
+        repo, gid, {"wolf": "werewolf", "hunter": "hunter", "vill": "villager"}
+    )
+
+    # FIRST_NIGHT -> DAY (no seer)
+    engine.resolve_phase(gid)
+
+    # Tied day vote -> NIGHT
+    engine.vote(gid, "wolf", "vill")
+    engine.vote(gid, "hunter", "wolf")
+    engine.vote(gid, "vill", "hunter")
+
+    # Wolf kills hunter — engine must NOT end game here despite wolf outnumbering
+    kill = Action(actor_id="wolf", action_type="kill", target_id="hunter")
+    game = engine.submit_night_action(gid, "wolf", kill)
+    assert game.phase == Phase.NIGHT  # not OVER — hunter fires first
+    assert game.hunter_shot_pending is True
+    assert not game.players["hunter"].alive
+
+    # Hunter fires back — only then is win condition evaluated
+    game = engine.hunter_shoot(gid, "hunter", "wolf")
+    assert not game.players["wolf"].alive
+    assert game.phase == Phase.OVER  # village wins
+
+
+# ---------------------------------------------------------------------------
+# Scenario 16: Bodyguard directly saves wolf's first target on night 2
+# ---------------------------------------------------------------------------
+
+
+def test_bodyguard_saves_wolf_target_night2(engine, repo):
+    # 4 players so bodyguard can guard self on night 1 and a different target on night 2
+    gid = _make_game(
+        engine,
+        {"wolf": "Wolf", "bg": "Bodyguard", "seer": "Seer", "vill": "Villager"},
+    )
+    _force_roles(
+        repo,
+        gid,
+        {"wolf": "werewolf", "bg": "bodyguard", "seer": "seer", "vill": "villager"},
+    )
+
+    # FIRST_NIGHT: seer investigates, bodyguard protects self
+    investigate = Action(actor_id="seer", action_type="investigate", target_id="wolf")
+    protect = Action(actor_id="bg", action_type="protect", target_id="bg")
+    engine.submit_night_action(gid, "bg", protect)
+    game = engine.submit_night_action(gid, "seer", investigate)
+    assert game.phase == Phase.DAY
+
+    # Tied day vote -> NIGHT 2
+    engine.vote(gid, "wolf", "seer")
+    engine.vote(gid, "seer", "wolf")
+    engine.vote(gid, "bg", "vill")
+    game = engine.vote(gid, "vill", "bg")
+    assert game.phase == Phase.NIGHT
+
+    # NIGHT 2: wolf targets seer, bodyguard intercepts — seer-as-target satisfies
+    # _night_is_ready's seer_done shortcut (target in pending_kill_targets)
+    kill = Action(actor_id="wolf", action_type="kill", target_id="seer")
+    guard = Action(actor_id="bg", action_type="protect", target_id="seer")
+    engine.submit_night_action(gid, "wolf", kill)
+    game = engine.submit_night_action(gid, "bg", guard)
+
+    assert game.players["seer"].alive  # wolf's target survives
+    assert game.phase == Phase.DAY
